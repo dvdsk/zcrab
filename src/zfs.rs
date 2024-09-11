@@ -216,6 +216,6 @@ mod tests {
             String::from("at.rollc.at:snapkeep=h24d30w8m6y1"),
         ]];
         let err = parse_snapshots(lines).unwrap_err();
-        assert_eq!(err.to_string(), "input contains invalid characters");
+        assert!(err.to_string().starts_with("can't parse datetime:"));
     }
 }
