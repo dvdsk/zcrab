@@ -23,6 +23,7 @@ As always, when in doubt, consider reading the source: it's mere
 
 ## Tested on
 
+- Alpine 3.20
 - FreeBSD 14.0
 - NixOS 23.05
 - Ubuntu 22.04

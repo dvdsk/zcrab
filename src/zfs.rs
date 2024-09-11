@@ -41,6 +41,19 @@ pub fn list_snapshots() -> Result<Vec<SnapshotMetadata>> {
     parse_snapshots(lines)
 }
 
+fn parse_datetime(s: &String) -> Result<chrono::DateTime<chrono::Utc>> {
+    let r = {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%a %b %e %H:%M %Y") {
+            Ok(dt)
+        } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%s") {
+            Ok(dt)
+        } else {
+            Err(format!("can't parse datetime: {}", s))
+        }
+    };
+    Ok(chrono::DateTime::from_utc(r?, chrono::Utc))
+}
+
 fn parse_snapshots(lines: Vec<Vec<String>>) -> Result<Vec<SnapshotMetadata>> {
     let mut snapshots = Vec::with_capacity(lines.len());
     for line in lines {
@@ -53,10 +66,7 @@ fn parse_snapshots(lines: Vec<Vec<String>>) -> Result<Vec<SnapshotMetadata>> {
             [name, created, used, _] => {
                 let metadata = SnapshotMetadata {
                     name: name.to_string(),
-                    created: chrono::DateTime::from_utc(
-                        chrono::NaiveDateTime::parse_from_str(created, "%a %b %e %H:%M %Y")?,
-                        chrono::Utc,
-                    ),
+                    created: parse_datetime(created)?,
                     used: parse_used(used)?,
                 };
                 snapshots.push(metadata)
