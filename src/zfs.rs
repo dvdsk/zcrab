@@ -87,7 +87,8 @@ pub fn add_snapshots() -> Result<HashMap<DataSet, Box<[SnapshotMetadata]>>> {
         .into_group_map();
 
     for list in snapshots.values_mut() {
-        list.sort_unstable();
+        // sort newest (largest timestamp) first
+        list.sort_by(|a, b| b.cmp(a));
     }
     // make it so the list order can no longer be changed
     let snapshots = snapshots

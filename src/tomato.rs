@@ -2,6 +2,7 @@ use chrono::Utc;
 use color_eyre::eyre::{Context, eyre};
 use color_eyre::{Result, Section};
 use itertools::Itertools;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -119,22 +120,23 @@ impl PolicyChecker<'_> {
     pub(crate) fn rejected<'a>(
         &self,
         snapshots_newest_first: &'a [SnapshotMetadata],
-    ) -> Vec<&'a SnapshotMetadata> {
-        let mut to_remove: Vec<_> = snapshots_newest_first.iter().collect();
+    ) -> HashSet<&'a SnapshotMetadata> {
+        assert!(
+            snapshots_newest_first.is_sorted_by(|a, b| a >= b),
+            "must be sorted with newest first (so largest date/timestamp first)"
+        );
+        let mut to_remove: HashSet<_> = snapshots_newest_first.iter().collect();
         for rule in self.rules_shortest_resention_first {
             for i in 0..rule.retained_copies {
                 let range = rule.snapshot_period.mul_f64(i as f64)
                     ..rule.snapshot_period.mul_f64((i + 1) as f64);
-                for (j, snapshot) in to_remove.iter().enumerate() {
+                for snapshot in snapshots_newest_first {
                     let elapsed = Utc::now()
                         .signed_duration_since(snapshot.created)
                         .to_std()
                         .unwrap_or(Duration::ZERO);
-                    dbg!(&snapshot.name, elapsed, &range);
                     if range.contains(&elapsed) {
-                        dbg!(&to_remove);
-                        to_remove.remove(j);
-                        dbg!(&to_remove);
+                        to_remove.remove(snapshot);
                         break;
                     }
                 }
@@ -195,8 +197,9 @@ mod tests {
         let rejected = checker.rejected(&snapshots);
         // note:
         // algo: take oldest from period..2*period
-        let a = rejected.iter().map(|s| (*s).clone()).collect::<Vec<_>>();
-        let b = [aged!(9 m), aged!(29 m)];
+        let mut a = rejected.iter().map(|s| (*s).clone()).collect::<Vec<_>>();
+        a.sort_by(|a, b| b.cmp(a));
+        let b = [aged!(120 s), aged!(9 m), aged!(29 m)];
         assert!(a.iter().zip(b).all(|(a, b)| a.name == b.name));
     }
 }
