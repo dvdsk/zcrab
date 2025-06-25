@@ -1,11 +1,10 @@
+Fork of zfs-autosnap by:
+- Wesley Moore
+- Kamil Cholewiński
+
 # zfs-autosnap
 
-Minimal viable ZFS snapshot utility.
-
-Add `zfs-autosnap snap` to your cron.hourly, and `zfs-autosnap gc` to
-cron.daily; then set `at.rollc.at:snapkeep=h24d30w8m6y1` (or whatever
-is your retention policy) on datasets you want managed. Try
-`zfs-autosnap status` to check what's going on.
+ZFS snapshot utility.
 
 Retenion policy is set via the property `at.rollc.at:snapkeep`, which
 must be present on any datasets (filesystems or volumes) that you'd
@@ -17,16 +16,6 @@ datasets, and considers its creation time to decide whether to keep
 it. The snapshot name does not matter! If you'd like to retain a
 particular snapshot (e.g. right before a risky upgrade), set its
 `at.rollc.at:snapkeep` property to a literal minus (`-`).
-
-As always, when in doubt, consider reading the source: it's mere
-400ish lines of relatively clean Rust.
-
-## Tested on
-
-- Alpine 3.20
-- FreeBSD 14.0
-- NixOS 23.05
-- Ubuntu 22.04
 
 ## Safety
 

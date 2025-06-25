@@ -1,11 +1,8 @@
 [package]
 name = "zfs-autosnap"
-authors = [
-  "Wesley Moore <wes@wezm.net>",
-  "Kamil Cholewiński <kamil@rollc.at>"
-]
+authors = ["David Kleingeld"]
 version = "0.2.0"
-edition = "2018"
+edition = "2024"
 
 homepage = "https://github.com/rollcat/zfs-autosnap"
 repository = "https://github.com/rollcat/zfs-autosnap.git"
@@ -20,4 +17,8 @@ categories = ["command-line-utilities"]
 [dependencies]
 byte-unit = "4"
 chrono = "0.4"
+clap = { version = "4.5.40", features = ["derive"] }
+color-eyre = "0.6.5"
+itertools = "0.14.0"
+service-install = "0.5.6"
 subprocess = "0.2"
