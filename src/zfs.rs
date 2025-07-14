@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -6,9 +7,9 @@ use byte_unit::Byte;
 use chrono::prelude::*;
 use color_eyre::eyre::eyre;
 use itertools::Itertools;
-use color_eyre::Result;
+use color_eyre::{Result, Section};
 
-use crate::{DataSet, PROPERTY_SNAPKEEP, RetentionPolicy};
+use crate::{DataSet, ZFS_PROPERTY, RetentionPolicy};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct SnapshotMetadata {
@@ -42,13 +43,6 @@ impl SnapshotMetadata {
             .expect("Snapshot names always contain @")
             .0
     }
-
-    pub(crate) fn elapsed(&self) -> Duration {
-        Utc::now()
-            .signed_duration_since(self.created)
-            .to_std()
-            .unwrap_or(Duration::ZERO)
-    }
 }
 
 pub fn snapshot(dataset: &str) -> Result<SnapshotMetadata> {
@@ -70,13 +64,13 @@ pub fn snapshot(dataset: &str) -> Result<SnapshotMetadata> {
 pub fn add_snapshots() -> Result<HashMap<DataSet, Box<[SnapshotMetadata]>>> {
     // List all snapshots under our control.
     // zfs list -H -t snapshot -o name,creation,used,at.rollc.at:snapkeep
-    let lines = call_read(
+    let lines = call_zfs_cli(
         "list",
         &[
             "-t",
             "snapshot",
             "-o",
-            &format!("name,creation,used,{}", PROPERTY_SNAPKEEP),
+            &format!("name,creation,used,{ZFS_PROPERTY}"),
         ],
     )?;
 
@@ -142,11 +136,22 @@ fn parse_datetime(s: &String) -> Result<chrono::DateTime<chrono::Utc>> {
 pub fn get_property(dataset: &str, property: &str) -> Result<String> {
     // Get a single named property on given dataset.
     // zfs get -H -o value $property $dataset
-    Ok(call_read("get", &["-o", "value", property, dataset])?
-        .get(0)
+    Ok(call_zfs_cli("get", &["-o", "value", property, dataset])?
+        .first()
         .unwrap()[0]
         .clone())
 }
+
+pub fn set_policy(dataset: &str, policy: &RetentionPolicy) -> Result<()> {
+    let output = Command::new("zfs").args(["set", &format!("{ZFS_PROPERTY}={policy:?}"), dataset]).output()?;
+    if !output.stderr.is_empty() {
+        Err(eyre!("zfs set failed"))
+            .with_note(|| format!("stderr is: {}", String::from_utf8_lossy(&output.stderr)))
+    } else {
+        Ok(())
+    }
+}
+
 
 pub struct ConfiguredDataSet {
     pub path: String,
@@ -155,9 +160,17 @@ pub struct ConfiguredDataSet {
     pub sorted_snapshots: Box<[SnapshotMetadata]>,
 }
 
+impl ConfiguredDataSet {
+    pub fn until_next_snapshot(&self) -> Option<Duration> {
+        self
+            .retention_policy
+            .next_snapshot_in(&self.sorted_snapshots)
+    }
+}
+
 pub fn configured_datasets() -> Result<Vec<ConfiguredDataSet>> {
     let mut snapshots = add_snapshots()?;
-    let datasets = iter_datasets()?;
+    let datasets = iter_configured_datasets()?;
     datasets.map_ok(|(name, policy)| {
         ConfiguredDataSet {
             sorted_snapshots: snapshots.remove(&name).unwrap_or_default(),
@@ -166,17 +179,24 @@ pub fn configured_datasets() -> Result<Vec<ConfiguredDataSet>> {
     }).collect()
 }
 
-pub fn iter_datasets() -> Result<impl Iterator<Item = Result<(String, RetentionPolicy)>>> {
+pub fn iter_unconfigured_datasets() -> Result<impl Iterator<Item = String>> {
+    Ok(call_zfs_cli(
+        "list",
+        &[],
+    )?.into_iter().map(|mut row| row.remove(0) )) // TODO error handling
+}
+
+pub fn iter_configured_datasets() -> Result<impl Iterator<Item = Result<(String, RetentionPolicy)>>> {
     // Which datasets should get a snapshot?
     // zfs get -H -t filesystem,volume -o name,value at.rollc.at:snapkeep
-    Ok(call_read(
+    Ok(call_zfs_cli(
         "get",
         &[
             "-t",
             "filesystem,volume",
             "-o",
             "name,value",
-            PROPERTY_SNAPKEEP,
+            ZFS_PROPERTY,
         ],
     )?
     .into_iter()
@@ -206,7 +226,7 @@ pub fn destroy_snapshot(snapshot: &SnapshotMetadata) -> Result<()> {
     call_do("destroy", &[&snapshot.name])
 }
 
-fn call_read(action: &str, args: &[&str]) -> Result<Vec<Vec<String>>> {
+fn call_zfs_cli(action: &str, args: &[&str]) -> Result<Vec<Vec<String>>> {
     // Helper function to get/list datasets and their properties into a nice table.
     Ok(subprocess::Exec::cmd("zfs")
         .arg(action)

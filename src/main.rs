@@ -1,127 +1,26 @@
 use clap::{Parser, Subcommand};
-use color_eyre::Result;
+use color_eyre::eyre::eyre;
+use color_eyre::{Result, Section};
+use libproc::proc_pid;
 use service_install::install_system;
+use std::fmt::Display;
 use std::thread;
 use std::time::Duration;
 
-use tomato::{PROPERTY_SNAPKEEP, RetentionPolicy};
+use policy::{RetentionPolicy, ZFS_PROPERTY};
 use zfs::{ConfiguredDataSet, SnapshotMetadata, configured_datasets};
 
-mod tomato;
+mod configure;
+mod policy;
+mod status;
 mod zfs;
 
-// fn gc_find(snapshots: &HashMap<DataSet, Vec<SnapshotMetadata>>) -> Result<AgeCheckResult> {
-//     // List all snapshots we're interested in, group them by dataset, check them against
-//     // their parent dataset's retention policy, and aggregate them into the final result,
-//     // which can be presented to the user (do_status()) or the garbage collector (do_gc()).
-//     let mut keep = vec![];
-//     let mut delete = vec![];
-//     for (key, group) in snapshots.iter() {
-//         let policy = RetentionPolicy::from_str(&zfs::get_property(key, PROPERTY_SNAPKEEP)?)
-//             .map_err(|()| "unable to parse retention policy")?;
-//         let check = policy.check_age(group);
-//         keep.extend(check.keep);
-//         delete.extend(check.delete);
-//     }
-//     Ok(AgeCheckResult { keep, delete })
-// }
-
-// fn status() -> Result<()> {
-//     // Present a nice summary to the user.
-//     let check = gc_find()?;
-//     if !check.keep.is_empty() {
-//         println!(
-//             "keep: {}",
-//             Byte::from_bytes(check.keep.iter().map(|s| s.used.get_bytes()).sum::<u128>())
-//                 .get_appropriate_unit(true)
-//         );
-//         for s in check.keep {
-//             println!(
-//                 "keep: {}\t{}\t{}",
-//                 s.name,
-//                 s.created.to_rfc3339_opts(SecondsFormat::Secs, true),
-//                 s.used.get_appropriate_unit(true)
-//             );
-//         }
-//     }
-//     if !check.delete.is_empty() {
-//         println!(
-//             "delete: {}",
-//             Byte::from_bytes(
-//                 check
-//                     .delete
-//                     .iter()
-//                     .map(|s| s.used.get_bytes())
-//                     .sum::<u128>()
-//             )
-//             .get_appropriate_unit(true)
-//         );
-//         for s in check.delete {
-//             println!(
-//                 "delete: {}\t{}\t{}",
-//                 s.name,
-//                 s.created.to_rfc3339_opts(SecondsFormat::Secs, true),
-//                 s.used.get_appropriate_unit(true)
-//             );
-//         }
-//     }
-//     Ok(())
-// }
-
-// fn do_gc() -> Result<()> {
-//     // Garbage collection. Find all snapshots to delete, and delete them without asking
-//     // twice. If you need to only check the status, use do_status.
-//     let check = gc_find()?;
-//     if !check.delete.is_empty() {
-//         println!(
-//             "delete: {}",
-//             Byte::from_bytes(
-//                 check
-//                     .delete
-//                     .iter()
-//                     .map(|s| s.used.get_bytes())
-//                     .sum::<u128>()
-//             )
-//             .get_appropriate_unit(true)
-//         );
-//     }
-//     for s in check.delete {
-//         println!(
-//             "delete: {}\t{}\t{}",
-//             s.name,
-//             s.created.to_rfc3339_opts(SecondsFormat::Secs, true),
-//             s.used.get_appropriate_unit(true)
-//         );
-//         zfs::destroy_snapshot(s)?;
-//     }
-//     Ok(())
-// }
-
-fn until_next_snapshot<'a>(
-    datasets: &'a [ConfiguredDataSet],
-) -> impl Iterator<Item = (Duration, &'a ConfiguredDataSet)> {
-    datasets.iter().filter_map(|dataset| {
-        dataset
-            .sorted_snapshots
-            .iter()
-            .filter(|snapshot| snapshot.dataset() == dataset.path)
-            .max_by_key(|snapshot| snapshot.created.clone())
-            .map(|newest| {
-                (
-                    dataset
-                        .retention_policy
-                        .shortest_period()
-                        .saturating_sub(newest.elapsed()),
-                    dataset,
-                )
-            })
-    })
-}
-
-fn duration_until_next_snapshot_needed<'a>(datasets: &'a [ConfiguredDataSet]) -> Option<Duration> {
-    until_next_snapshot(datasets)
-        .map(|(duration_until, _)| duration_until)
-        .min()
+fn until_next_snapshot(
+    datasets: &[ConfiguredDataSet],
+) -> impl Iterator<Item = (Duration, &ConfiguredDataSet)> {
+    datasets
+        .iter()
+        .filter_map(|dataset| dataset.until_next_snapshot().zip(Some(dataset)))
 }
 
 type DataSet = String;
@@ -158,42 +57,73 @@ Tips
 struct Args {
     #[command(subcommand)]
     command: Commands,
+    /// In sandbox mode no actual snapshots are removed or created.
+    /// Use this for testing a new configuration.
+    #[arg(short, long)]
     sandbox: bool,
+    /// Prints more information in Status
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Install the deamon to start on boot
     Install,
+    /// Remove the deamon
     Remove,
-    // Status,
-    // Test,
+    /// Configure datasets for use
+    Configure,
+    /// Show Configuration, snapshots and schedule for next snapshot
+    Status,
+    /// Run the deamon in the foreground in the current terminal
     Run,
 }
 
+impl Display for Commands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Commands::Install => concat!("install the ", env!("CARGO_PKG_NAME"), "deamon"),
+            Commands::Remove => concat!("remove the ", env!("CARGO_PKG_NAME"), "deamon"),
+            Commands::Configure => {
+                concat!("configure datasets for use with ", env!("CARGO_PKG_NAME"))
+            }
+            Commands::Status => "show configuration, snapshots and schedule for next snapshot",
+            Commands::Run => "run the deamon",
+        })
+    }
+}
+
 fn main() -> Result<()> {
+    color_eyre::install().unwrap();
     let args = Args::parse();
 
-    match args.command {
-        Commands::Install => install(),
-        Commands::Remove => remove(),
-        // Commands::Status => status(),
-        // Commands::Test => list_configured_datasets().map(|_| ()),
-        Commands::Run => daemon(args.sandbox),
+    match (args.command, proc_pid::am_root() || args.sandbox) {
+        (Commands::Install, true) => install(),
+        (Commands::Remove, true) => remove(),
+        (Commands::Configure, true) => configure::interactive_cli::start(args.sandbox),
+        (Commands::Status, _) => status::print_status(args.verbose),
+        (Commands::Run, true) => daemon(args.sandbox),
+        (command, false) => {
+            Err(eyre!("Need root to {command:?}").suggestion("Try running with sudo"))
+        }
     }
 }
 
 fn daemon(sandbox: bool) -> Result<()> {
     loop {
         let datasets = configured_datasets()?;
-        let until_next_check =
-            duration_until_next_snapshot_needed(&datasets).unwrap_or(Duration::from_secs(60 * 10));
+        let until_next_check = until_next_snapshot(&datasets)
+            .map(|(dur, _)| dur)
+            .min()
+            .unwrap_or(Duration::from_secs(60 * 10));
         thread::sleep(until_next_check);
         for dataset in need_snapshot(&datasets) {
             if !sandbox {
-                let s = zfs::snapshot(&dataset)?;
+                let s = zfs::snapshot(dataset)?;
                 println!("made snapshot: {}", s.name);
             } else {
-                println!("would snapshot dataset: {}", dataset);
+                println!("would snapshot dataset: {dataset}");
             }
         }
         for snapshot in need_removal(&datasets) {
@@ -207,19 +137,17 @@ fn daemon(sandbox: bool) -> Result<()> {
     }
 }
 
-fn need_snapshot<'a>(datasets: &'a [ConfiguredDataSet]) -> impl Iterator<Item = &'a DataSet> {
+fn need_snapshot(datasets: &[ConfiguredDataSet]) -> impl Iterator<Item = &DataSet> {
     until_next_snapshot(datasets)
         .filter(|(until, _)| until.is_zero())
         .map(|(_, dataset)| &dataset.path)
 }
 
 fn need_removal(datasets: &[ConfiguredDataSet]) -> impl Iterator<Item = &SnapshotMetadata> {
-    datasets
-        .iter()
-        .map(|dataset| {
-            let checker = dataset.retention_policy.checker();
-            let rejects = checker.rejected(&dataset.sorted_snapshots);
-            rejects
-        })
-        .flatten()
+    datasets.iter().flat_map(|dataset| {
+        dataset
+            .retention_policy
+            .judge(&dataset.sorted_snapshots)
+            .rejected
+    })
 }

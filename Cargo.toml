@@ -1,16 +1,16 @@
 [package]
-name = "zfs-autosnap"
+name = "zcrab"
 authors = ["David Kleingeld"]
 version = "0.2.0"
 edition = "2024"
 
-homepage = "https://github.com/rollcat/zfs-autosnap"
-repository = "https://github.com/rollcat/zfs-autosnap.git"
+homepage = "https://github.com/dvdsk/zcrab"
+repository = "https://github.com/dvdsk/zcrab"
 
 readme = "README.md"
 license = "MIT"
 
-description = "Automatic ZFS snapshot utility"
+description = "A deamon that manages ZFS snapshots"
 keywords = ["zfs", "cli", "automatic", "snapshot"]
 categories = ["command-line-utilities"]
 
@@ -19,6 +19,9 @@ byte-unit = "4"
 chrono = "0.4"
 clap = { version = "4.5.40", features = ["derive"] }
 color-eyre = "0.6.5"
+humantime = "2.2.0"
+inquire = "0.7.5"
 itertools = "0.14.0"
+libproc = "0.14.10"
 service-install = "0.5.6"
 subprocess = "0.2"
