@@ -105,14 +105,14 @@ fn parse_snapshots(lines: Vec<Vec<String>>) -> Result<Vec<SnapshotMetadata>> {
         // snapshot to be retained / opted out.
         //
         match line.as_slice() {
-            [_, _, _, snapkeep] if snapkeep == "-" => continue,
+            [_, _, _, snapkeep] if snapkeep == "-" => (),
             [name, created, used, _] => {
                 let metadata = SnapshotMetadata {
                     name: name.to_string(),
                     created: parse_datetime(created)?,
                     used: parse_used(used)?,
                 };
-                snapshots.push(metadata)
+                snapshots.push(metadata);
             }
             _ => return Err(eyre!("list snapshots parse error")),
         }
@@ -144,11 +144,11 @@ pub fn get_property(dataset: &str, property: &str) -> Result<String> {
 
 pub fn set_policy(dataset: &str, policy: &RetentionPolicy) -> Result<()> {
     let output = Command::new("zfs").args(["set", &format!("{ZFS_PROPERTY}={policy:?}"), dataset]).output()?;
-    if !output.stderr.is_empty() {
+    if output.stderr.is_empty() {
+        Ok(())
+    } else {
         Err(eyre!("zfs set failed"))
             .with_note(|| format!("stderr is: {}", String::from_utf8_lossy(&output.stderr)))
-    } else {
-        Ok(())
     }
 }
 
@@ -237,7 +237,7 @@ fn call_zfs_cli(action: &str, args: &[&str]) -> Result<Vec<Vec<String>>> {
         .stdout_str()
         .lines()
         .filter(|&s| !s.is_empty())
-        .map(|s| s.split('\t').map(|ss| ss.to_string()).collect())
+        .map(|s| s.split('\t').map(str::to_string).collect())
         .collect())
 }
 

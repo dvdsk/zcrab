@@ -53,7 +53,7 @@ pub fn start(sandbox: bool) -> Result<()> {
     if let Some(changed) = changed
         && !sandbox
     {
-        changed.store_and_apply_retention_policy()?
+        changed.store_and_apply_retention_policy()?;
     }
 
     Ok(())

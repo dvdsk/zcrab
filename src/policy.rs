@@ -25,10 +25,10 @@ pub struct RetentionPolicy(pub Vec<RetentionRule>);
 impl fmt::Debug for RetentionPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for rule in self.0.iter().take(self.0.len().saturating_sub(1)) {
-            f.write_fmt(format_args!("{rule:?} "))?
+            f.write_fmt(format_args!("{rule:?} "))?;
         }
         if let Some(last) = self.0.last() {
-            f.write_fmt(format_args!("{last:?}"))?
+            f.write_fmt(format_args!("{last:?}"))?;
         }
 
         Ok(())
@@ -218,7 +218,7 @@ impl RetentionPolicy {
 
         self.0
             .iter()
-            .flat_map(|rule| rule.next_snapshot_in(snapshots))
+            .filter_map(|rule| rule.next_snapshot_in(snapshots))
             .min()
     }
 

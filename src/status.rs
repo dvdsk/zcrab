@@ -20,7 +20,7 @@ pub fn write_status(f: &mut impl Write, datasets: &[ConfiguredDataSet], verbose:
         )
         .unwrap();
         return;
-    };
+    }
 
     if verbose {
         writeln!(f, "Configured datasets").unwrap();
@@ -135,9 +135,8 @@ fn write_configured_datasets_section_verbose(f: &mut impl Write, datasets: &[Con
     for dataset in datasets {
         let next_snapshot_in = dataset
             .until_next_snapshot()
-            .map(|d| d - Duration::from_nanos(d.subsec_nanos() as u64))
-            .map(|d| format_duration(d).to_string())
-            .unwrap_or("never".to_string());
+            .map(|d| d - Duration::from_nanos(u64::from(d.subsec_nanos())))
+            .map_or("never".to_string(), |d| format_duration(d).to_string());
         let ConfiguredDataSet {
             path,
             retention_policy,
@@ -184,9 +183,8 @@ fn write_configured_datasets_section(f: &mut impl Write, datasets: &[ConfiguredD
     for dataset in datasets {
         let next_snapshot_in = dataset
             .until_next_snapshot()
-            .map(|d| d - Duration::from_nanos(d.subsec_nanos() as u64))
-            .map(|d| format_duration(d).to_string())
-            .unwrap_or("never".to_string());
+            .map(|d| d - Duration::from_nanos(u64::from(d.subsec_nanos())))
+            .map_or("never".to_string(), |d| format_duration(d).to_string());
         let ConfiguredDataSet {
             path,
             retention_policy,

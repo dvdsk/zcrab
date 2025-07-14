@@ -119,19 +119,19 @@ fn daemon(sandbox: bool) -> Result<()> {
             .unwrap_or(Duration::from_secs(60 * 10));
         thread::sleep(until_next_check);
         for dataset in need_snapshot(&datasets) {
-            if !sandbox {
+            if sandbox {
+                println!("would snapshot dataset: {dataset}");
+            } else {
                 let s = zfs::snapshot(dataset)?;
                 println!("made snapshot: {}", s.name);
-            } else {
-                println!("would snapshot dataset: {dataset}");
             }
         }
         for snapshot in need_removal(&datasets) {
-            if !sandbox {
+            if sandbox {
+                println!("would remove expired snapshot: {}", snapshot.name);
+            } else {
                 zfs::destroy_snapshot(snapshot)?;
                 println!("removed expired snapshot: {}", snapshot.name);
-            } else {
-                println!("would remove expired snapshot: {}", snapshot.name);
             }
         }
     }
