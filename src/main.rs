@@ -14,6 +14,8 @@ mod configure;
 mod policy;
 mod status;
 mod zfs;
+#[cfg(feature = "ssh")]
+mod ssh;
 
 fn until_next_snapshot(
     datasets: &[ConfiguredDataSet],
@@ -78,6 +80,8 @@ enum Commands {
     Status,
     /// Run the deamon in the foreground in the current terminal
     Run,
+    /// Tests ssh
+    Ssh,
 }
 
 impl Display for Commands {
@@ -90,6 +94,7 @@ impl Display for Commands {
             }
             Commands::Status => "show configuration, snapshots and schedule for next snapshot",
             Commands::Run => "run the deamon",
+            Commands::Ssh => "testing ssh",
         })
     }
 }
@@ -104,6 +109,10 @@ fn main() -> Result<()> {
         (Commands::Configure, true) => configure::interactive_cli::start(args.sandbox),
         (Commands::Status, _) => status::print_status(args.verbose),
         (Commands::Run, true) => daemon(args.sandbox),
+        #[cfg(feature = "ssh")]
+        (Commands::Ssh, _) => ssh::test(),
+        #[cfg(not(feature = "ssh"))]
+        (Commands::Ssh, _) => panic!("not compiled with ssh support"),
         (command, false) => {
             Err(eyre!("Need root to {command:?}").suggestion("Try running with sudo"))
         }
