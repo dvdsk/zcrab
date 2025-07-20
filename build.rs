@@ -62,11 +62,10 @@ fn main() {
         .map(|s| s.to_string())
         .collect();
 
-
-    if let Err(e) = std::fs::create_dir("builds_without_ssh")
+    if let Err(e) = std::fs::create_dir_all("builds_without_ssh/target")
         && e.kind() != ErrorKind::AlreadyExists
     {
-        panic!("Error creating dir `builds_without_ssh`: {e}");
+        panic!("Error creating dir `builds_without_ssh/target`: {e}");
     }
     let (targets, versions) = target_and_versions();
     for (target, path) in targets {
@@ -81,72 +80,14 @@ fn main() {
         }
     }
 
-    if let Err(e) = std::fs::create_dir("builds_without_ssh/target")
-        && e.kind() != ErrorKind::AlreadyExists
-    {
-        panic!("Error creating dir `builds_without_ssh/target`: {e}");
-    }
     for target in needed {
-        // cant work as it holds a lock on the dir
-        eprintln!("Spawning cargo to build ssh less build for: {target}");
-        use std::process::Stdio;
-        let mut cargo = process::Command::new("cargo")
-            .arg("build")
-            .arg("-vv")
-            .arg("--no-default-features")
-            .args(["--target-dir", "builds_without_ssh/target"])
-            .args(["--target", &target])
-            .env_remove("CARGO_FEATURE_SSH")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-
-        use std::io::{Read, Write};
-        let mut stdout = cargo.stdout.take().unwrap();
-        let mut stderr = cargo.stderr.take().unwrap();
-        let status = std::thread::scope(|s| {
-            s.spawn(|| {
-                let mut readbuf = [0; 10];
-                loop {
-                    let Ok(n) = stdout.read(&mut readbuf) else {
-                        eprintln!("closed stdout");
-                        break;
-                    };
-                    if n == 0 {
-                        eprintln!("closed stderr");
-                        break;
-                    }
-                    std::io::stderr().write(&readbuf[..n]).unwrap();
-                }
-            });
-            s.spawn(|| {
-                let mut readbuf = [0; 10];
-                loop {
-                    let Ok(n) = stderr.read(&mut readbuf) else {
-                        eprintln!("closed stderr");
-                        break;
-                    };
-                    if n == 0 {
-                        eprintln!("closed stderr");
-                        break;
-                    }
-                    std::io::stderr().write(&readbuf[..n]).unwrap();
-                }
-            });
-            eprintln!("Waiting for cargo build to end");
-            let status = cargo.wait().unwrap();
-            eprintln!("It ended");
-            status
-        });
-        eprintln!("joined");
-
-        if !status.success() {
-            panic!("Error compiling build_without_ssh");
-        }
+        build_target(&target);
 
         std::fs::rename(
-            format!("builds_without_ssh/target/{target}/debug/{}", env!("CARGO_PKG_NAME")),
+            format!(
+                "builds_without_ssh/target/{target}/debug/{}",
+                env!("CARGO_PKG_NAME")
+            ),
             format!("builds_without_ssh/{target}"),
         )
         .unwrap();
@@ -156,5 +97,65 @@ fn main() {
             env!("CARGO_PKG_VERSION"),
         )
         .unwrap();
+    }
+}
+
+fn build_target(target: &String) {
+    // cant work as it holds a lock on the dir
+    eprintln!("Spawning cargo to build ssh less build for: {target}");
+    use std::process::Stdio;
+    let mut cargo = process::Command::new("cargo")
+        .arg("build")
+        .arg("-vv")
+        .arg("--no-default-features")
+        .args(["--target-dir", "builds_without_ssh/target"])
+        .args(["--target", target])
+        .env_remove("CARGO_FEATURE_SSH")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::{Read, Write};
+    let mut stdout = cargo.stdout.take().unwrap();
+    let mut stderr = cargo.stderr.take().unwrap();
+    let status = std::thread::scope(|s| {
+        s.spawn(|| {
+            let mut readbuf = [0; 10];
+            loop {
+                let Ok(n) = stdout.read(&mut readbuf) else {
+                    eprintln!("closed stdout");
+                    break;
+                };
+                if n == 0 {
+                    eprintln!("closed stderr");
+                    break;
+                }
+                std::io::stderr().write(&readbuf[..n]).unwrap();
+            }
+        });
+        s.spawn(|| {
+            let mut readbuf = [0; 10];
+            loop {
+                let Ok(n) = stderr.read(&mut readbuf) else {
+                    eprintln!("closed stderr");
+                    break;
+                };
+                if n == 0 {
+                    eprintln!("closed stderr");
+                    break;
+                }
+                std::io::stderr().write(&readbuf[..n]).unwrap();
+            }
+        });
+        eprintln!("Waiting for cargo build to end");
+        let status = cargo.wait().unwrap();
+        eprintln!("It ended");
+        status
+    });
+    eprintln!("joined");
+
+    if !status.success() {
+        panic!("Error compiling build_without_ssh");
     }
 }
