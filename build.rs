@@ -1,9 +1,43 @@
 use semver::Version;
 use std::collections::{HashMap, HashSet};
 use std::env::VarError;
-use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::{fs, process};
+
+fn main() {
+    println!("cargo::rerun-if-changed=src");
+
+    match std::env::var("CARGO_FEATURE_SSH") {
+        Err(e) if e == VarError::NotPresent => {
+            return;
+        }
+        Err(e) => panic!("unknown error while checking ssh feature envar: {e}"),
+        Ok(v) if v == "1" => (),
+        Ok(v) => panic!("unknown value: `{v}` for ssh feature envar"),
+    }
+
+    // let mut needed: HashSet<String> = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
+    let mut needed: HashSet<&str> = ["x86_64-unknown-linux-musl"].into_iter().collect();
+
+    std::fs::create_dir_all("builds_without_ssh/target").unwrap();
+    let (targets, versions) = target_and_versions();
+    for (target, path) in targets {
+        match versions.get(&target) {
+            Some(v) if version_compatible(v) => {
+                needed.remove(target.as_str());
+            }
+            Some(_) | None => {
+                assert!(path.iter().any(|d| d == "builds_without_ssh"));
+                fs::remove_file(path).unwrap();
+            }
+        }
+    }
+
+    for target in needed {
+        build_target(&target);
+        copy_bin_and_store_version(target);
+    }
+}
 
 type Target = String;
 fn target_and_versions() -> (Vec<(Target, PathBuf)>, HashMap<Target, Version>) {
@@ -22,7 +56,7 @@ fn target_and_versions() -> (Vec<(Target, PathBuf)>, HashMap<Target, Version>) {
         );
 
         let file_name = entry.file_name().into_string().unwrap();
-        if let Some(arch) = file_name.strip_prefix("version_of") {
+        if let Some(arch) = file_name.strip_prefix("version_of_") {
             let version = fs::read_to_string(entry.path()).unwrap();
             let version = Version::parse(&version).unwrap();
             versions.insert(arch.to_string(), version);
@@ -42,66 +76,24 @@ fn version_compatible(file_version: &Version) -> bool {
     }
 }
 
-fn main() {
-    println!("cargo::rerun-if-changed=src");
-    match dbg!(std::env::var("CARGO_FEATURE_SSH")) {
-        Err(e) if e == VarError::NotPresent => {
-            return;
-        }
-        Err(e) => panic!("unknown error while checking ssh feature envar: {e}"),
-        Ok(v) if v == "1" => (),
-        Ok(v) => panic!("unknown value: `{v}` for ssh feature envar"),
-    }
-    eprintln!("Checking if we have the ssh-less binaries to be included in the final binary");
+fn copy_bin_and_store_version(target: &str) {
+    std::fs::rename(
+        format!(
+            "builds_without_ssh/target/{target}/debug/{}",
+            env!("CARGO_PKG_NAME")
+        ),
+        format!("builds_without_ssh/{target}"),
+    )
+    .unwrap();
 
-    // Tell Cargo that if the given file changes, to rerun this build script.
-
-    // let mut needed: HashSet<String> = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
-    let mut needed: HashSet<String> = ["x86_64-unknown-linux-gnu"]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    if let Err(e) = std::fs::create_dir_all("builds_without_ssh/target")
-        && e.kind() != ErrorKind::AlreadyExists
-    {
-        panic!("Error creating dir `builds_without_ssh/target`: {e}");
-    }
-    let (targets, versions) = target_and_versions();
-    for (target, path) in targets {
-        match versions.get(&target) {
-            Some(v) if version_compatible(v) => {
-                needed.remove(&target);
-            }
-            Some(_) | None => {
-                assert!(path.iter().any(|d| d == "builds_without_ssh"));
-                fs::remove_file(path).unwrap();
-            }
-        }
-    }
-
-    for target in needed {
-        build_target(&target);
-
-        std::fs::rename(
-            format!(
-                "builds_without_ssh/target/{target}/debug/{}",
-                env!("CARGO_PKG_NAME")
-            ),
-            format!("builds_without_ssh/{target}"),
-        )
-        .unwrap();
-
-        std::fs::write(
-            format!("builds_without_ssh/{target}"),
-            env!("CARGO_PKG_VERSION"),
-        )
-        .unwrap();
-    }
+    std::fs::write(
+        format!("builds_without_ssh/version_of_{target}"),
+        env!("CARGO_PKG_VERSION"),
+    )
+    .unwrap();
 }
 
-fn build_target(target: &String) {
-    // cant work as it holds a lock on the dir
+fn build_target(target: &str) {
     eprintln!("Spawning cargo to build ssh less build for: {target}");
     use std::process::Stdio;
     let mut cargo = process::Command::new("cargo")
@@ -116,44 +108,18 @@ fn build_target(target: &String) {
         .spawn()
         .unwrap();
 
-    use std::io::{Read, Write};
     let mut stdout = cargo.stdout.take().unwrap();
     let mut stderr = cargo.stderr.take().unwrap();
     let status = std::thread::scope(|s| {
         s.spawn(|| {
-            let mut readbuf = [0; 10];
-            loop {
-                let Ok(n) = stdout.read(&mut readbuf) else {
-                    eprintln!("closed stdout");
-                    break;
-                };
-                if n == 0 {
-                    eprintln!("closed stderr");
-                    break;
-                }
-                std::io::stderr().write(&readbuf[..n]).unwrap();
-            }
+            std::io::copy(&mut stdout, &mut std::io::stderr()).unwrap();
         });
         s.spawn(|| {
-            let mut readbuf = [0; 10];
-            loop {
-                let Ok(n) = stderr.read(&mut readbuf) else {
-                    eprintln!("closed stderr");
-                    break;
-                };
-                if n == 0 {
-                    eprintln!("closed stderr");
-                    break;
-                }
-                std::io::stderr().write(&readbuf[..n]).unwrap();
-            }
+            std::io::copy(&mut stderr, &mut std::io::stderr()).unwrap();
         });
-        eprintln!("Waiting for cargo build to end");
         let status = cargo.wait().unwrap();
-        eprintln!("It ended");
         status
     });
-    eprintln!("joined");
 
     if !status.success() {
         panic!("Error compiling build_without_ssh");
